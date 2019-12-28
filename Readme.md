@@ -9,9 +9,9 @@ Erstellen der Entwicklungsumgebung wurde mit `conda`
 realisiert dafür wurde ein Enviroment mit den notwendigen
 Dependencies erstellt und als conda env file abgelegt.
 
-´´´
-conda env create -f <filename>
-´´´
+```
+conda env create -f env.yml
+```
 
 Als Editor wurde jupyter notebook benutzt dieser lässt sich
 nach Erstellung des Enviroments folgendermaßen starten.
