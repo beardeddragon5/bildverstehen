@@ -1,3 +1,7 @@
+# +
+# %load_ext autoreload
+# %autoreload 2
+
 import subspace as sub
 import numpy as np
 import cv2
@@ -6,6 +10,8 @@ import multiprocessing as multi
 import draw
 import time
 
+
+# -
 
 def _hough_process(args):
   x, y, src = args
@@ -62,12 +68,12 @@ def _hough_process(args):
 
 # display(values[:5])
 # np.einsum('ij,...j', Ma_iterate, values)[:5]
-# -
 
-def hough_vec(src: sub.subspaces_t) -> sub.subspaces_t:
-  resolution = sub.subspaces_resolution(src)
-  ss = sub.subspaces_create(resolution)
-  
+# +
+def _hough_vec_process(input_values):
+  resolution = int(input_values[6, 0])
+  Ma = input_values[0:3]
+  Mb = input_values[3:6]
   arr = np.arange(-1, 1, 2.0 / resolution)
 
   nonzero = arr[arr != 0]
@@ -77,6 +83,21 @@ def hough_vec(src: sub.subspaces_t) -> sub.subspaces_t:
   values = np.concatenate((arr, arr_reciprocal), axis=0)
   values = np.c_[ values, values, np.ones(len(values)) ]
   
+  space = sub.subspaces_create(resolution)
+  for M in [Ma, Mb]:
+    ba_array = np.einsum('ij,...j', M, values)[:, :2]
+    ba_array = ba_array[~np.isnan(ba_array[:, 0])]
+    if ba_array.size > 0:
+      np.apply_along_axis(lambda ba: sub.subspaces_itemset(space, ba, 1), 1, ba_array)
+  
+  return space
+  
+
+def hough_vec(src: sub.subspaces_t) -> sub.subspaces_t:
+  resolution = sub.subspaces_resolution(src)
+  ss = sub.subspaces_create(resolution)
+  
+  arr = np.arange(-1, 1, 2.0 / resolution)
   prod = np.array(np.meshgrid(arr, arr)).T.reshape(-1, 2).tolist()  
   
   nan_m = np.array([
@@ -104,34 +125,28 @@ def hough_vec(src: sub.subspaces_t) -> sub.subspaces_t:
       [0, 1, 0],
       [0, 0, 1]
     ])
-  
-  print("apply on axis")
   # needs the most amount of time
   Ma_iterate = np.apply_along_axis(value_filter_a_iterate, 1, prod)
   Mb_iterate = np.apply_along_axis(value_filter_b_iterate, 1, prod)
 
   # Ms = np.concatenate((Ma_iterate, Mb_iterate)).reshape(-1, 3, 3)
-  Ma_iterate = Ma_iterate[~np.isnan(Ma_iterate[:,0,0])].reshape(-1, 3, 3)
-  Mb_iterate = Mb_iterate[~np.isnan(Mb_iterate[:,0,0])].reshape(-1, 3, 3)
+  M_iterate_filter = np.all([~np.isnan(Ma_iterate[:,0,0]), ~np.isnan(Mb_iterate[:,0,0])], axis=0)
   
-  print("setup done")
-  for i, M in enumerate(Ma_iterate):
-    ba_array = np.einsum('ij,...j', M, values)[:, :2]
-    ba_array = ba_array[~np.isnan(ba_array[:, 0])]
-    if ba_array.size > 0:
-      space = sub.subspaces_create(resolution)
-      np.apply_along_axis(lambda ba: sub.subspaces_itemset(space, ba, 1), 1, ba_array)
+  Ma_iterate = Ma_iterate[M_iterate_filter].reshape(-1, 3, 3)
+  Mb_iterate = Mb_iterate[M_iterate_filter].reshape(-1, 3, 3)
+  M_iterate = np.column_stack((Ma_iterate, Mb_iterate, np.full((len(Ma_iterate), 3, 3), resolution)))
+
+  with multi.Pool(multi.cpu_count()) as p:
+    chunksize = len(M_iterate) // multi.cpu_count()
+    iterator = p.imap_unordered(_hough_vec_process, M_iterate, chunksize = chunksize)
+    
+    for i, space in enumerate(iterator):
       sub.subspaces_add_to(ss, space)
 
-  for i, M in enumerate(Mb_iterate):
-    ba_array = np.einsum('ij,...j', M, values)[:, :2]
-    ba_array = ba_array[~np.isnan(ba_array[:, 0])]
-    if ba_array.size > 0:
-      space = sub.subspaces_create(resolution)
-      np.apply_along_axis(lambda ba: sub.subspaces_itemset(space, ba, 1), 1, ba_array)
-      sub.subspaces_add_to(ss, space)
   return ss
 
+
+# -
 
 def hough(src: sub.subspaces_t) -> sub.subspaces_t:
   resolution = sub.subspaces_resolution(src)
@@ -148,20 +163,7 @@ def hough(src: sub.subspaces_t) -> sub.subspaces_t:
   with multi.Pool(multi.cpu_count()) as p:
     chunksize = len(prod) // multi.cpu_count()
     iterator = p.imap_unordered(_hough_process, prod, chunksize = chunksize)
-    
-    print("chunksize = ", chunksize)
-    start = time.time()
-    space = next(iterator)
-    while space is None:
-      start = time.time()
-      space = next(iterator)
-    sub.subspaces_add_to(ss, space)
-    end = time.time()
-    duration = end - start
-    
-    print("estimated time in s: {}, single in s: {}".format(duration * len(prod), duration))
-    
-    for space in iterator:
+    for i, space in enumerate(iterator):
       if space is not None:
         sub.subspaces_add_to(ss, space)
 

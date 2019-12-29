@@ -1,3 +1,7 @@
+# +
+# %load_ext autoreload
+# %autoreload 2
+
 import cv2
 import hough
 import draw
@@ -5,6 +9,7 @@ import subspace as sub
 import os
 import numpy as np
 from matplotlib import pyplot as plt
+# -
 
 # # Configuration
 
@@ -69,7 +74,9 @@ src = hough.from_image(resolution, canny)
 
 # %time ss = hough.hough_vec(src)
 
-# %time ss = hough.hough(src)
+# +
+# # %time ss = hough.hough(src)
+# -
 
 # # Display Results
 
@@ -84,7 +91,10 @@ from ipywidgets import interact, FloatSlider
 @interact(threshold = FloatSlider(threshold, min=0, max=1, step=0.05))
 def plot_results(threshold: int):
   out = np.copy(image)
-  [draw.g(out, ab) for ab in sub.subspaces_to_line(ss, threshold)]
+  
+  threshold_pixel_value = int(sub.subspaces_max(ss) * threshold)
+  
+  [draw.g(out, ab) for ab in sub.subspaces_to_line(ss, threshold_pixel_value)]
   
   plt.imshow(out)
   plt.show()
@@ -92,7 +102,9 @@ def plot_results(threshold: int):
   fig, axs = plt.subplots(1, 3, sharey=True)
   fig.set_size_inches(18.5, 10.5)
   for i in range(3):
-    axs[i].imshow(subspace_normalize(ss[i]), 'gray')
+    space = ss[i]
+    filtered_space = np.where(space >= threshold_pixel_value, space, 0)
+    axs[i].imshow(subspace_normalize(filtered_space), 'gray')
     
   fig, axs = plt.subplots(1, 3, sharey=True)
   fig.set_size_inches(18.5, 10.5)

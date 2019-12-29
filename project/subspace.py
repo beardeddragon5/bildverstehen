@@ -63,7 +63,7 @@ def subspace_inverse_pos(resolution: int, xy: tuple) -> tuple:
 
 def subspaces_create(resolution: int) -> subspaces_t:
   spaces = [SUBSPACE_AB, SUBSPACE_1A_BA, SUBSPACE_1B_AB]
-  return np.array([subspace_create(resolution) for i in spaces])
+  return [subspace_create(resolution) for i in spaces]
 
 
 def subspaces_resolution(subspaces: subspaces_t) -> int:
