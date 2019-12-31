@@ -70,17 +70,21 @@ def _hough_process(args):
 # np.einsum('ij,...j', Ma_iterate, values)[:5]
 
 # +
-def _hough_vec_process(input_values):
-  resolution = int(input_values[6, 0])
-  Ma = input_values[0:3]
-  Mb = input_values[3:6]
+def _subspace_axis(resolution: int) -> np.array:
   arr = np.arange(-1, 1, 2.0 / resolution)
-
+  
   nonzero = arr[arr != 0]
   ones = np.ones(len(nonzero), dtype=np.float64)
   arr_reciprocal = np.true_divide(ones, nonzero)
 
-  values = np.concatenate((arr, arr_reciprocal), axis=0)
+  return np.concatenate((arr, arr_reciprocal), axis=0)
+
+def _hough_vec_process(input_values):
+  resolution = int(input_values[6, 0])
+  Ma = input_values[0:3]
+  Mb = input_values[3:6]
+  
+  values = _subspace_axis(resolution)
   values = np.c_[ values, values, np.ones(len(values)) ]
   
   space = sub.subspaces_create(resolution)
@@ -96,9 +100,9 @@ def _hough_vec_process(input_values):
 def hough_vec(src: sub.subspaces_t) -> sub.subspaces_t:
   resolution = sub.subspaces_resolution(src)
   ss = sub.subspaces_create(resolution)
+  values = _subspace_axis(resolution)
   
-  arr = np.arange(-1, 1, 2.0 / resolution)
-  prod = np.array(np.meshgrid(arr, arr)).T.reshape(-1, 2).tolist()  
+  prod = np.array(np.meshgrid(values, values)).T.reshape(-1, 2).tolist()  
   
   nan_m = np.array([
         [np.nan, 0, 0],

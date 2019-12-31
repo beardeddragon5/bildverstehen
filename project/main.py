@@ -13,10 +13,10 @@ from matplotlib import pyplot as plt
 
 # # Configuration
 
-image_path = '../images/Garagen.jpg'
+image_path = '../images/landshut1.png'
 canny_min = 230
 canny_max = 255
-threshold = 1.0
+threshold = 0.59
 resolution = None
 
 # # Load Image
@@ -71,12 +71,18 @@ plt.show()
 
 src = hough.from_image(resolution, canny)
 
-
 # %time ss = hough.hough_vec(src)
 
 # +
 # # %time ss = hough.hough(src)
 # -
+
+threshold_pixel_value = int(sub.subspaces_max(ss) * threshold)
+in_ss = [np.where(space >= threshold_pixel_value, space, 0) for space in ss]
+ss2 = hough.hough_vec(in_ss)
+
+ss3 = hough.hough_vec(ss2)
+
 
 # # Display Results
 
@@ -87,29 +93,39 @@ def subspace_normalize(s: sub.subspace_t):
 
 # +
 from ipywidgets import interact, FloatSlider
+from skimage.feature import peak_local_max
 
 @interact(threshold = FloatSlider(threshold, min=0, max=1, step=0.05))
-def plot_results(threshold: int):
+def plot_results(threshold: float):
   out = np.copy(image)
   
   threshold_pixel_value = int(sub.subspaces_max(ss) * threshold)
   
-  [draw.g(out, ab) for ab in sub.subspaces_to_line(ss, threshold_pixel_value)]
+  [draw.g(out, ab) for ab in sub.subspaces_to_line(ss, threshold)]
   
   plt.imshow(out)
   plt.show()
   
   fig, axs = plt.subplots(1, 3, sharey=True)
-  fig.set_size_inches(18.5, 10.5)
+  fig.set_size_inches(30, 10.5)
   for i in range(3):
-    space = ss[i]
+    axs[i].imshow(subspace_normalize(src[i]), 'gray')
+
+  fig, axs = plt.subplots(1, 3, sharey=True)
+  fig.set_size_inches(30, 10.5)
+  for space in ss:
     filtered_space = np.where(space >= threshold_pixel_value, space, 0)
     axs[i].imshow(subspace_normalize(filtered_space), 'gray')
     
   fig, axs = plt.subplots(1, 3, sharey=True)
-  fig.set_size_inches(18.5, 10.5)
-  for i in range(3):
-    axs[i].imshow(subspace_normalize(src[i]), 'gray')
+  fig.set_size_inches(30, 10.5)
+  for space in ss2:
+    axs[i].imshow(subspace_normalize(space), 'gray')
+    
+  fig, axs = plt.subplots(1, 3, sharey=True)
+  fig.set_size_inches(30, 10.5)
+  for space in ss3:
+    axs[i].imshow(subspace_normalize(space), 'gray')
 # -
 
 

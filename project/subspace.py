@@ -1,6 +1,7 @@
 from typing import NewType, List
 import numpy as np
 import cv2
+from skimage.feature import peak_local_max
 
 subspace_t = NewType('subspace_t', np.array)
 subspaces_t = NewType('subspaces_t', List[subspace_t])
@@ -22,7 +23,7 @@ def subspace_resolution(subspace: subspace_t) -> int:
 def subspace_peaks(subspace: subspace_t, threshold: int) -> List[tuple]:
   out = list()
   w, h = subspace.shape
-
+  
   for y in range(h):
     for x in range(w):
       if subspace.item((x, y)) >= threshold:
@@ -121,17 +122,6 @@ def subspaces_to_line(subspaces: subspaces_t, threshold: float) -> tuple:
       out.append((1 / ba[0], ba[1] / ba[0]))
 
   return out
-
-
-def subspaces_to_line_fast(subspaces: subspaces_t, threshold: float):
-  if type(threshold) == float:
-    max_value = subspaces_max(subspaces)
-    print("use threshold=({} * {})".format(max_value, threshold), end="=")
-    threshold = int(max_value * threshold)
-    print(threshold)
-
-  sub_ab = (subspaces[SUBSPACE_AB] >= threshold) * subspaces[SUBSPACE_AB]
-  print(sub_ab)
 
 
 def subspaces_pos(subspaces: subspaces_t, ba: tuple) -> tuple:
