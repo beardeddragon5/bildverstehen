@@ -1,7 +1,7 @@
 from typing import NewType, List
 import numpy as np
 import cv2
-from skimage.feature import peak_local_max
+# from skimage.feature import peak_local_max
 
 subspace_t = NewType('subspace_t', np.array)
 subspaces_t = NewType('subspaces_t', List[subspace_t])

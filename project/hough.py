@@ -139,9 +139,10 @@ def hough_vec(src: sub.subspaces_t) -> sub.subspaces_t:
   Ma_iterate = Ma_iterate[M_iterate_filter].reshape(-1, 3, 3)
   Mb_iterate = Mb_iterate[M_iterate_filter].reshape(-1, 3, 3)
   M_iterate = np.column_stack((Ma_iterate, Mb_iterate, np.full((len(Ma_iterate), 3, 3), resolution)))
-
+    
+  cpus = multi.cpu_count() - 2
   with multi.Pool(multi.cpu_count()) as p:
-    chunksize = len(M_iterate) // multi.cpu_count()
+    chunksize = max(1, (len(M_iterate) // multi.cpu_count()) // 20)
     iterator = p.imap_unordered(_hough_vec_process, M_iterate, chunksize = chunksize)
     
     for i, space in enumerate(iterator):
