@@ -19,7 +19,7 @@ def _eval(ba, x):
   return -ba[1] * x - ba[0]
 
 
-def g(image, ba):
+def g(image, ba, color=(255, 0, 0)):
   # print("y = {}x + {}".format(ab[0], ab[1]))
   start = (-1.0, _eval(ba, -1.0))
   end = (1.0, _eval(ba, 1.0))
@@ -51,4 +51,4 @@ def g(image, ba):
 
   # print(start, end)
 
-  cv2.line(image, start, end, (0, 0, 255), 1)
+  cv2.line(image, start, end, color, 1)

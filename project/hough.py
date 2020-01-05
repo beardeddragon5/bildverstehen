@@ -9,23 +9,17 @@ import sys
 import multiprocessing as multi
 import draw
 import time
+from matplotlib import pyplot as plt
 
 
-# -
-
+# +
 def _hough_process(args):
   x, y, src = args
   if sub.subspaces_item(src, (x, y)) == 0:
     return None
   
   resolution = sub.subspaces_resolution(src)
-  arr = np.arange(-1, 1, 2.0 / resolution)
-
-  nonzero = arr[arr != 0]
-  ones = np.ones(len(nonzero), dtype=np.float64)
-  arr_reciprocal = np.true_divide(ones, nonzero)
-
-  values = np.concatenate((arr, arr_reciprocal), axis=0)
+  values = sub.subspace_axis(resolution)
   
   pixel_subspace = sub.subspaces_create(resolution)
   
@@ -51,40 +45,35 @@ def _hough_process(args):
     np.apply_along_axis(lambda ba: sub.subspaces_itemset(pixel_subspace, ba, 1), 1, ba_array)
   return pixel_subspace
 
-
-# +
-# x = 1
-# y = 0
-# resolution = 200
-
-# values = np.arange(-1, 1, 2.0 / resolution)
-# values = np.c_[ values, values, np.ones(len(values)) ]
-
-# Ma_iterate = np.array([
-#     [-x, 0, -y],
-#     [0, 1, 0],
-#     [0, 0, 1]
-# ])
-
-# display(values[:5])
-# np.einsum('ij,...j', Ma_iterate, values)[:5]
-
-# +
-def _subspace_axis(resolution: int) -> np.array:
-  arr = np.arange(-1, 1, 2.0 / resolution)
+def hough(src: sub.subspaces_t) -> sub.subspaces_t:
+  resolution = sub.subspaces_resolution(src)
+  ss = sub.subspaces_create(resolution)
+  values = sub.subspace_axis(resolution)
   
-  nonzero = arr[arr != 0]
-  ones = np.ones(len(nonzero), dtype=np.float64)
-  arr_reciprocal = np.true_divide(ones, nonzero)
+  # cartesian of x an y
+  prod = np.array(np.meshgrid(values, values)).T.reshape(-1, 2).tolist()
+  for p in prod:
+    p.append(src)
+    
+  print("done with setup")
 
-  return np.concatenate((arr, arr_reciprocal), axis=0)
+  with multi.Pool(multi.cpu_count()) as p:
+    chunksize = len(prod) // multi.cpu_count()
+    iterator = p.imap_unordered(_hough_process, prod, chunksize = chunksize)
+    for i, space in enumerate(iterator):
+      if space is not None:
+        sub.subspaces_add_to(ss, space)
 
+  return ss
+
+
+# +
 def _hough_vec_process(input_values):
   resolution = int(input_values[6, 0])
   Ma = input_values[0:3]
   Mb = input_values[3:6]
   
-  values = _subspace_axis(resolution)
+  values = sub.subspace_axis(resolution)
   values = np.c_[ values, values, np.ones(len(values)) ]
   
   space = sub.subspaces_create(resolution)
@@ -100,7 +89,7 @@ def _hough_vec_process(input_values):
 def hough_vec(src: sub.subspaces_t) -> sub.subspaces_t:
   resolution = sub.subspaces_resolution(src)
   ss = sub.subspaces_create(resolution)
-  values = _subspace_axis(resolution)
+  values = sub.subspace_axis(resolution)
   
   prod = np.array(np.meshgrid(values, values)).T.reshape(-1, 2).tolist()  
   
@@ -110,22 +99,22 @@ def hough_vec(src: sub.subspaces_t) -> sub.subspaces_t:
         [0, 0, np.nan]
       ])
   
-  def value_filter_a_iterate(xy):
-    x, y = xy
-    if x == 0 or sub.subspaces_item(src, (x, y)) == 0:
+  def value_filter_a_iterate(ba):
+    b, a = ba
+    if b == 0 or sub.subspaces_item(src, ba) == 0:
       return nan_m
     return np.array([
       [1, 0, 0],
-      [0, -1/x, -y/x],
+      [0, -1/b, -a/b],
       [0, 0, 1]
     ])
   
-  def value_filter_b_iterate(xy):
-    x, y = xy
-    if sub.subspaces_item(src, (x, y)) == 0:
+  def value_filter_b_iterate(ba):
+    b, a = ba
+    if sub.subspaces_item(src, ba) == 0:
       return nan_m
     return np.array([
-      [-x, 0, -y],
+      [-b, 0, -a],
       [0, 1, 0],
       [0, 0, 1]
     ])
@@ -153,72 +142,20 @@ def hough_vec(src: sub.subspaces_t) -> sub.subspaces_t:
 
 # -
 
-def hough(src: sub.subspaces_t) -> sub.subspaces_t:
-  resolution = sub.subspaces_resolution(src)
-  ss = sub.subspaces_create(resolution)
-  arr = np.arange(-1, 1, 2.0 / resolution)
-  
-  # cartesian of x an y
-  prod = np.array(np.meshgrid(arr, arr)).T.reshape(-1, 2).tolist()
-  for p in prod:
-    p.append(src)
-    
-  print("done with setup")
-
-  with multi.Pool(multi.cpu_count()) as p:
-    chunksize = len(prod) // multi.cpu_count()
-    iterator = p.imap_unordered(_hough_process, prod, chunksize = chunksize)
-    for i, space in enumerate(iterator):
-      if space is not None:
-        sub.subspaces_add_to(ss, space)
-
-  return ss
-
-
-def from_image(resolution: int, image):
-  w, h = image.shape
-  if w != resolution or h != resolution:
-    raise ValueError("image must be of size {0}x{0}".format(resolution))
-  src = sub.subspaces_create(resolution)
-  
-  np.add(src[0][:resolution,:resolution], image, out=src[0][:resolution,:resolution])
-  return src
-
-
 if __name__ == '__main__':
-  resolution = 256
-  image = cv2.imread(sys.argv[1])
+  image_path = '../images/hough.png'
+  resolution = 200
+  
+  image = cv2.imread(image_path)
   image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+  image = cv2.resize(image, (resolution, resolution))
 
-  src = from_image(resolution, image)
-  print("convert image")
+  src = sub.subspaces_from_image(resolution, image)
+  
+  ss = hough_vec(src)
 
-  # cv2.imshow('gray', src[0])
-  ss = hough(src)
-  print("hough done")
-
-  # sub.subspaces_to_line_fast(ss)
-
-  out = cv2.cvtColor(src[0], cv2.COLOR_GRAY2BGR)
-
-  [draw.g(out, ab) for ab in sub.subspaces_to_line(ss, 0.9)]
-
-  cv2.imshow('subspace 1', cv2.normalize(
-      ss[0], None, alpha=0, beta=255,
-      norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U))
-
-  cv2.imshow('subspace 2', cv2.normalize(
-      ss[1], None, alpha=0, beta=255,
-      norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U))
-
-  cv2.imshow('subspace 3', cv2.normalize(
-      ss[2], None, alpha=0, beta=255,
-      norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U))
-
-  cv2.imshow('gray', out)
-
-  print("done")
-
-  cv2.waitKey(0)
+  fig, axs = plt.subplots(1, 3, sharey=True)
+  for i, space in enumerate(ss):
+    axs[i].imshow(space, 'gray', extent=[-1, 1, 1, -1])
 
 
