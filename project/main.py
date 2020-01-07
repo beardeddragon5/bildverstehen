@@ -37,7 +37,7 @@ from skimage.feature import peak_local_max
 # - https://earth.jsc.nasa.gov/DatabaseImages/ESC/large/ISS013/ISS013-E-18319.JPG
 
 image_path = '../images/rubix.jpg'
-resolution = None
+resolution = 300
 
 # Für den Canny Algorithmus zur Reduzierung der verwendeten Daten aus dem Bild werden `canny_min` und 
 # `canny_max` verwendet.
@@ -123,7 +123,7 @@ layer0 = sub.subspaces_from_image(resolution, canny)
 # Erster Hough durchlauf auf dem in subspaces konvertierten Bild. In Layer 1 werden somit mögliche Geraden
 # gefunden die durch Kanten des Bildes verlaufen.
 
-# %time layer1 = hough.hough_vec(layer0)
+# %time layer1 = hough.hough_vec(layer0, max_memory = 25 * 1024**3)
 
 # Vor jedem weiteren Hough durchgang werden zunächst die Daten gefiltered. Dazu steht im Artikel:
 # > ... As to the data read out at each layer, local maxima are selected. These discrete points are also the acutal data passed on to the next layer. In order to avoid closely spaced clusters of peaks, a non-maximum suppression is applied. The logarithm of peak height ist used as weightining factor for the votes it has at the next level. ...  
@@ -174,7 +174,7 @@ def filter_subspace(spaces: sub.subspaces_t, nms: int, threshold: float = 0.0):
         space, 
         None, 
         alpha=0, 
-        beta=space.max() / 255, 
+        beta=space.max() / max_value, 
         norm_type=cv2.NORM_MINMAX, 
         dtype=cv2.CV_64F
       )
@@ -183,16 +183,7 @@ def filter_subspace(spaces: sub.subspaces_t, nms: int, threshold: float = 0.0):
       log_weights = 1 - np.log2(1 + float_space)
       
       # weight the space with results in log_weights
-      weighted_space = float_space * log_weights
-      weighted_space = cv2.normalize(
-        weighted_space, 
-        None,
-        alpha=0,
-        beta=space.max(),
-        norm_type=cv2.NORM_MINMAX,
-        dtype=cv2.CV_8U
-      )
-      
+      weighted_space = (space * log_weights).astype(np.int32)
       local_max_mask = peak_local_max(
         weighted_space, 
         min_distance=nms,
@@ -209,13 +200,13 @@ def filter_subspace(spaces: sub.subspaces_t, nms: int, threshold: float = 0.0):
 
 # -
 
-filtered_layer1 = filter_subspace(layer1, non_maximum_suppression_size, 0.50)
+filtered_layer1 = filter_subspace(layer1, non_maximum_suppression_size)
 
-# %time layer2 = hough.hough_vec(filtered_layer1)
+# %time layer2 = hough.hough_vec(layer1, max_memory = 22 * 1024**3)
 
 filtered_layer2 = filter_subspace(layer2, non_maximum_suppression_size)
 
-# %time layer3 = hough.hough_vec(filtered_layer2)
+# %time layer3 = hough.hough_vec(layer2, max_memory = 25 * 1024**3)
 
 filtered_layer3 = filter_subspace(layer3, non_maximum_suppression_size)
 
@@ -231,7 +222,7 @@ def plot_lines(axis, ss: sub.subspaces_t, style='-'):
     
 def plot_intersect(axis, ss: sub.subspaces_t, style: str):
   for x, y in sub.subspaces_to_line(ss, 1):
-    axis.plot(-y, -x, style)
+    axis.plot(x, y, style)
     
 def plot_layer(name: str, ss: sub.subspaces_t, fss: sub.subspaces_t = None, line_ss: sub.subspaces_t = None):
   # left, right, bottom, top
@@ -250,13 +241,34 @@ def plot_layer(name: str, ss: sub.subspaces_t, fss: sub.subspaces_t = None, line
   
   if fss is None:
     for i, space in enumerate(ss):
-      axs[i].imshow(space, 'gray', extent = extent, vmin = 0, vmax = space.max())
+      axs[i].imshow(space, 'gray', extent = extent) # , vmin = 0, vmax = space.max())
   else:
     for i, space in enumerate(ss):
-      axs[0, i].imshow(space, 'gray', extent = extent, vmin = 0, vmax = space.max())
+      axs[0, i].imshow(space, 'gray', extent = extent) # , vmin = 0, vmax = space.max())
     for i, space in enumerate(fss):
-      axs[1, i].imshow(space, 'gray', extent = extent, vmin = 0, vmax = space.max())
+      axs[1, i].imshow(space, 'gray', extent = extent) # , vmin = 0, vmax = space.max())
   return (fig, axs)
+
+def progress(count, total, status='', bar_len=60):
+  import sys
+  filled_len = int(round(bar_len * count / float(total)))
+
+  percents = round(100.0 * count / float(total), 1)
+  bar = '=' * filled_len + '-' * (bar_len - filled_len)
+
+  sys.stderr.write('[%s] %s%s ...%s\r' % (bar, percents, '%', status))
+  sys.stderr.flush()
+
+def full_space(ss: sub.subspaces_t):
+  resolution = sub.subspaces_resolution(ss)
+  values = sub.subspace_axis(resolution)
+  prod = np.array(np.meshgrid(values, values)).T.reshape(-1, 2)
+  image = np.apply_along_axis(lambda xy: sub.subspaces_item(ss, xy), 1, prod).reshape((values.size, values.size))
+  return image.T
+
+def ss_thres(ss: sub.subspaces_t, threshold: float):
+  ss_max = sub.subspaces_max(ss)
+  return [np.where((s > ss_max * threshold), s, 0) for s in ss]
 
 
 # -
@@ -266,25 +278,30 @@ fig.suptitle("image", fontsize=32)
 fig.set_size_inches(20, 20)
 axs.set_ylim((5, -5))
 axs.set_xlim((-5, 5))
-axs.imshow(image, 'gray', extent=[-1, 1, 1, -1])
-plot_lines(axs, filtered_layer1)
-#plot_intersect(axs, fss2, 'b-')
-plot_intersect(axs, filtered_layer3, 'ro')
+_ = axs.imshow(image, 'gray', extent=[-1, 1, 1, -1])
+plot_lines(axs, ss_thres(filtered_layer1, 0.9))
+plot_intersect(axs, ss_thres(filtered_layer2, 0.9999), 'bo')
+plot_lines(axs, ss_thres(layer3, 0.9), 'r-')
 
-l1_max = sub.subspaces_max(layer1)
-with_thres = [np.where((s > l1_max * 0.52380952) & (s < l1_max * 0.52380955), s, 0) for s in layer1]
-_ = plot_layer("layer 0", layer0, line_ss=filtered_layer1)
+_ = plot_layer("layer 0", layer0, line_ss=ss_thres(filtered_layer1, 0.9))
 
-l2_max = sub.subspaces_max(layer2)
-with_thres = [np.where((s > l2_max * 0.52380952) & (s < l2_max * 0.52380955), s, 0) for s in layer2]
-plot_layer("layer 1", layer1, line_ss = with_thres)
+plot_layer("layer 1", layer1, fss=filtered_layer1, line_ss=ss_thres(filtered_layer2, 0.8))
 print([space[space > 0].size for space in filtered_layer1])
 
 
-fig, axs = plot_layer("layer 2", layer2, fss=filtered_layer2, line_ss=filtered_layer3)
+values = sub.subspace_axis(resolution)
+fig, axs = plt.subplots(1, 1, sharey=True)
+fig.suptitle("full layer1", fontsize=32)
+fig.set_size_inches(20, 20)
+axs.set_ylim((values.max(), values.min()))
+axs.set_xlim((values.min(), values.max()))
+axs.imshow(full_space(layer1), 'gray', extent = [values.min(), values.max(), values.max(), values.min()])
+plot_lines(axs, ss_thres(filtered_layer2, 0.5))
+
+fig, axs = plot_layer("layer 2", layer2, line_ss=ss_thres(filtered_layer3, 0.99))
 print([space[space > 0].size for space in filtered_layer2])
 
-plot_layer("layer 3", layer3, fss=filtered_layer3)
+plot_layer("layer 3", layer3)
 print([space[space > 0].size for space in filtered_layer3])
 
 

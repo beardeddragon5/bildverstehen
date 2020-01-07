@@ -11,9 +11,9 @@ SUBSPACE_1A_BA = 1
 SUBSPACE_1B_AB = 2
 
 
-def subspace_create(resolution: int) -> subspace_t:
+def subspace_create(resolution: int, dtype = np.int32) -> subspace_t:
   subspace_shape = (resolution + 1, resolution + 1)
-  return np.zeros(subspace_shape, dtype=np.uint64)
+  return np.zeros(subspace_shape, dtype = dtype)
 
 
 def subspace_resolution(subspace: subspace_t) -> int:
@@ -67,12 +67,12 @@ def subspace_inverse_pos(resolution: int, xy: tuple) -> tuple:
 def subspace_axis(resolution: int) -> np.array:
   arr = np.arange(-1, 1, 2.0 / resolution)
   outer = np.array([ resolution / (i * 2) for i in range(1, resolution // 2)])
-  return np.concatenate((arr, outer, -outer), axis=0)
+  return np.concatenate((-outer, arr, np.flip(outer)), axis=0)
 
 
-def subspaces_create(resolution: int) -> subspaces_t:
+def subspaces_create(resolution: int, dtype = np.int32) -> subspaces_t:
   spaces = [SUBSPACE_AB, SUBSPACE_1A_BA, SUBSPACE_1B_AB]
-  return [subspace_create(resolution) for i in spaces]
+  return [subspace_create(resolution, dtype) for i in spaces]
 
 
 def subspaces_from_image(resolution: int, image):
@@ -189,6 +189,7 @@ if __name__ == '__main__':
   ss = subspaces_create(7)
   ss[0].itemset((2, 1), 1)
   display(subspace_peaks(ss[0], 1))
+  display(subspaces_item(ss, (-0.666, -0.3333)))
 
 
 
