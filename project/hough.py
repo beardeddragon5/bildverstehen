@@ -60,6 +60,8 @@ from matplotlib import pyplot as plt
 # über entsprechende Matrizen entweder `a` oder `b` für den jeweiligen Wert ausgerechnet und in einem
 # Subspace eingefügt. Der Wert wird dabei auf `1` gesetzt, dadurch wird ein Wert für den selben Wert von `x` 
 # o.`y` nicht doppelt gesetzt.
+#
+# Es muss sowohl `a` als auch `b` ausrechnet werden, da sonst nicht der gesamte Raum ausgefüllt wird.
 
 def _hough_vec_process(input_values):
   resolution = int(input_values[6, 0])
@@ -74,6 +76,7 @@ def _hough_vec_process(input_values):
     ba_array = np.einsum('ij,...j', M, values)[:, :2]
     ba_array = ba_array[~np.isnan(ba_array[:, 0])]
     if ba_array.size > 0:
+      # long running
       np.apply_along_axis(lambda ba: sub.subspaces_itemset(space, ba, 1), 1, ba_array)
   
   return space

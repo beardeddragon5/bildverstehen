@@ -36,8 +36,8 @@ from skimage.feature import peak_local_max
 # - Google Maps
 # - https://earth.jsc.nasa.gov/DatabaseImages/ESC/large/ISS013/ISS013-E-18319.JPG
 
-image_path = '../images/rubix.jpg'
-resolution = 300
+image_path = '../images/figure3.png'
+resolution = None
 
 # Für den Canny Algorithmus zur Reduzierung der verwendeten Daten aus dem Bild werden `canny_min` und 
 # `canny_max` verwendet.
@@ -143,16 +143,17 @@ layer0 = sub.subspaces_from_image(resolution, canny)
 import scipy.ndimage as ndimage
 import scipy.ndimage.filters as filters
 
-# def non_maximum_suppression(image, distance):
-#   out = np.zeros(image.shape, dtype=image.dtype)
-#   resolution = sub.subspace_resolution(image)
-#   pad_image = np.pad(image, distance, 'constant', constant_values=0)
-#   for y in range(distance, distance + resolution, 1):
-#     for x in range(distance, distance + resolution, 1):
-#       neighbor_max = pad_image[y - distance:y + distance, x - distance:x + distance].max()
-#       if neighbor_max != 0 and pad_image.item((y, x)) == neighbor_max:
-#         out.itemset((y - distance, x - distance), neighbor_max)
-#   return out
+
+def non_maximum_suppression(image, distance):
+  out = np.zeros(image.shape, dtype=image.dtype)
+  resolution = sub.subspace_resolution(image)
+  pad_image = np.pad(image, distance, 'constant', constant_values=0)
+  for y in range(distance, distance + resolution, 1):
+    for x in range(distance, distance + resolution, 1):
+      neighbor_max = pad_image[y - distance:y + distance, x - distance:x + distance].max()
+      if neighbor_max != 0 and pad_image.item((y, x)) == neighbor_max:
+        out.itemset((y - distance, x - distance), neighbor_max)
+  return out
 
 # def local_maxima(data, min_distance, threshold_abs):
 #   data_max = filters.maximum_filter(data, min_distance, mode='constant')
@@ -169,31 +170,16 @@ def filter_subspace(spaces: sub.subspaces_t, nms: int, threshold: float = 0.0):
     out = []
     max_value = sub.subspaces_max(spaces)
     for space in spaces:
-      # try not to lose information of min_max in image
-      float_space = cv2.normalize(
-        space, 
-        None, 
-        alpha=0, 
-        beta=space.max() / max_value, 
-        norm_type=cv2.NORM_MINMAX, 
-        dtype=cv2.CV_64F
-      )
-      
-      # applying log to float space 
-      log_weights = 1 - np.log2(1 + float_space)
-      
-      # weight the space with results in log_weights
-      weighted_space = (space * log_weights).astype(np.int32)
       local_max_mask = peak_local_max(
-        weighted_space, 
-        min_distance=nms,
+        space, 
+        min_distance=1,
         indices=False,
         exclude_border=False,
         threshold_abs=max_value * threshold,
       )
-      
-      local_max_space = np.where(local_max_mask, weighted_space, 0)
-      # local_max_space = non_maximum_suppression(local_max_space, nms)
+      local_max_space = np.where(local_max_mask, space, 0)
+      local_max_space = non_maximum_suppression(local_max_space, nms)
+      local_max_space = np.log2(1 + local_max_space).astype(np.int32)
       out.append(local_max_space)
     return out
 
@@ -202,13 +188,17 @@ def filter_subspace(spaces: sub.subspaces_t, nms: int, threshold: float = 0.0):
 
 filtered_layer1 = filter_subspace(layer1, non_maximum_suppression_size)
 
-# %time layer2 = hough.hough_vec(layer1, max_memory = 22 * 1024**3)
+# %time layer2 = hough.hough_vec(filtered_layer1, max_memory = 22 * 1024**3)
 
 filtered_layer2 = filter_subspace(layer2, non_maximum_suppression_size)
 
-# %time layer3 = hough.hough_vec(layer2, max_memory = 25 * 1024**3)
+# %time layer3 = hough.hough_vec(filtered_layer2, max_memory = 25 * 1024**3)
 
 filtered_layer3 = filter_subspace(layer3, non_maximum_suppression_size)
+
+[cv2.imwrite('/tmp/layer1_{}.png'.format(i), layer1[i]) for i in range(3)]
+[cv2.imwrite('/tmp/layer2_{}.png'.format(i), layer2[i]) for i in range(3)]
+[cv2.imwrite('/tmp/layer3_{}.png'.format(i), layer3[i]) for i in range(3)]
 
 
 # # Display Results
@@ -279,30 +269,41 @@ fig.set_size_inches(20, 20)
 axs.set_ylim((5, -5))
 axs.set_xlim((-5, 5))
 _ = axs.imshow(image, 'gray', extent=[-1, 1, 1, -1])
-plot_lines(axs, ss_thres(filtered_layer1, 0.9))
-plot_intersect(axs, ss_thres(filtered_layer2, 0.9999), 'bo')
-plot_lines(axs, ss_thres(layer3, 0.9), 'r-')
+plot_lines(axs, ss_thres(filtered_layer1, 0.75))
+#plot_lines(axs, ss_thres(filtered_layer2, 0.5), 'b-')
+#plot_intersect(axs, ss_thres(filtered_layer3, 0.9), 'ro')
 
-_ = plot_layer("layer 0", layer0, line_ss=ss_thres(filtered_layer1, 0.9))
+_ = plot_layer("layer 0", layer0) # , line_ss=ss_thres(filtered_layer1, 0.75)
 
-plot_layer("layer 1", layer1, fss=filtered_layer1, line_ss=ss_thres(filtered_layer2, 0.8))
+plot_layer("layer 1", layer1, fss=filtered_layer1) # , line_ss=ss_thres(filtered_layer2, 0.8)
 print([space[space > 0].size for space in filtered_layer1])
+#print(filtered_layer1[0].max())
+#plt.hist(cv2.calcHist(filtered_layer1[0], 0, None, filtered_layer1[0].max(), [0, filtered_layer1[0].max()]))
 
 
+# +
+# flayer1 = full_space(filtered_layer1)
+# -
+
+'''
 values = sub.subspace_axis(resolution)
 fig, axs = plt.subplots(1, 1, sharey=True)
 fig.suptitle("full layer1", fontsize=32)
 fig.set_size_inches(20, 20)
 axs.set_ylim((values.max(), values.min()))
 axs.set_xlim((values.min(), values.max()))
-axs.imshow(full_space(layer1), 'gray', extent = [values.min(), values.max(), values.max(), values.min()])
-plot_lines(axs, ss_thres(filtered_layer2, 0.5))
+axs.imshow(flayer1, 'gray', extent = [values.min(), values.max(), values.max(), values.min()])
+plot_lines(axs, ss_thres(filtered_layer2, 0.90))
+'''
+;
 
-fig, axs = plot_layer("layer 2", layer2, line_ss=ss_thres(filtered_layer3, 0.99))
+fig, axs = plot_layer("layer 2", layer2, fss = filtered_layer2)
 print([space[space > 0].size for space in filtered_layer2])
 
-plot_layer("layer 3", layer3)
+plot_layer("layer 3", layer3, fss = filtered_layer3)
 print([space[space > 0].size for space in filtered_layer3])
+
+
 
 
 
