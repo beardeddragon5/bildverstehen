@@ -26,9 +26,9 @@ def subspace_peaks(subspace: subspace_t, threshold: int) -> List[tuple]:
   for x in range(resolution):
     for y in range(resolution):
       if subspace.item((y, x)) >= threshold:
-        ba = subspace_inverse_pos(resolution, (x, y))
+        ab = subspace_inverse_pos(resolution, (x, y))
         # print("wtf", (x, y), "->", ba)
-        out.append(ba)
+        out.append(ab)
 
   return out
 
@@ -46,8 +46,8 @@ def subspace_peaks(subspace: subspace_t, threshold: int) -> List[tuple]:
 #   return output[:2]
 # -
 
-def subspace_itemset(subspace: subspace_t, ba: tuple, value: np.uint64):
-  x, y = subspace_pos(subspace_resolution(subspace), ba)
+def subspace_itemset(subspace: subspace_t, ab: tuple, value: np.uint64):
+  x, y = subspace_pos(subspace_resolution(subspace), ab)
   # print(ab, '->', (a, b, sub_id), '->', subspaces[sub_id].item(a, b))
   return subspace.itemset((y, x), value)
 
@@ -89,27 +89,20 @@ def subspaces_resolution(subspaces: subspaces_t) -> int:
   return subspace_resolution(subspaces[SUBSPACE_AB])
 
 
-def subspaces_item(subspaces: subspaces_t, ba: tuple) -> np.uint8:
-  x, y, sub_id = subspaces_pos(subspaces, ba)
-  # print(ab, '->', (a, b, sub_id), '->', subspaces[sub_id].item(a, b))
+def subspaces_item(subspaces: subspaces_t, ab: tuple) -> np.uint8:
+  x, y, sub_id = subspaces_pos(subspaces, ab)
   return subspaces[sub_id].item((y, x))
 
 
-def subspaces_itemset(subspaces: subspaces_t, ba: tuple, value: np.uint8):
-  x, y, sub_id = subspaces_pos(subspaces, ba)
+def subspaces_itemset(subspaces: subspaces_t, ab: tuple, value: np.uint8):
+  x, y, sub_id = subspaces_pos(subspaces, ab)
   if sub_id == -1:
     return
-  # print(ab, '->', (a, b, sub_id), '->', subspaces[sub_id].item(a, b))
   subspaces[sub_id].itemset((y, x), value)
 
 
 def subspaces_max(subspaces: subspaces_t) -> int:
-  out = 0
-  for subspace in subspaces:
-    t, max_value, t1, t2 = cv2.minMaxLoc(subspace)
-    if max_value > out:
-      out = max_value
-  return out
+  return np.max([space.max() for space in subspaces])
 
 
 def subspaces_add_to(subspaces: subspaces_t, value: subspaces_t):
@@ -129,23 +122,23 @@ def subspaces_to_line(subspaces: subspaces_t, threshold: float) -> tuple:
   # print("(b/a, 1/a):")
   ba_locs = subspace_peaks(subspaces[SUBSPACE_1A_BA], threshold)
   for ba in ba_locs:
-    if ba[1] != 0:
-      frac_b_a = ba[0]
-      frac_1_a = ba[1]
-      out.append((frac_b_a / frac_1_a, 1 / frac_1_a))
+    if ba[0] != 0:
+      frac_1_a = ba[0]
+      frac_b_a = ba[1]
+      out.append((1 / frac_1_a, frac_b_a / frac_1_a))
   # print("(a/b, 1/b):")
   ba_locs = subspace_peaks(subspaces[SUBSPACE_1B_AB], threshold)
   for ba in ba_locs:
-    if ba[1] != 0:
-      frac_a_b = ba[0]
-      frac_1_b = ba[1]
-      out.append((1 / frac_1_b, frac_a_b / frac_1_b))
+    if ba[0] != 0:
+      frac_1_b = ba[0]
+      frac_a_b = ba[1]
+      out.append((frac_a_b / frac_1_b, 1 / frac_1_b))
 
   return out
 
 
-def subspaces_pos(subspaces: subspaces_t, ba: tuple) -> tuple:
-  b, a = ba
+def subspaces_pos(subspaces: subspaces_t, ab: tuple) -> tuple:
+  a, b = ab
   off = subspaces_resolution(subspaces) // 2
   M = np.array([
       [off, 0, off],
@@ -156,15 +149,15 @@ def subspaces_pos(subspaces: subspaces_t, ba: tuple) -> tuple:
     return (np.nan, np.nan, -1)
   
   if abs(a) <= 1 and abs(b) <= 1:
-    output = (M @ np.array([b, a, 1]))
+    output = (M @ np.array([a, b, 1]))
     subspace = SUBSPACE_AB
 
   elif abs(a) > 1 and abs(b) <= abs(a):
-    output = (M @ np.array([b / a, 1.0 / a, 1]))
+    output = (M @ np.array([1.0 / a, b / a, 1]))
     subspace = SUBSPACE_1A_BA
 
   elif abs(b) > 1 and abs(a) < abs(b):
-    output = (M @ np.array([a / b, 1.0 / b, 1]))
+    output = (M @ np.array([1.0 / b, a / b, 1]))
     subspace = SUBSPACE_1B_AB
 
   output = output[:2].astype('int')
@@ -184,10 +177,15 @@ if __name__ == '__main__':
   print(subspace_inverse_pos(256, (0, 0)))
   
   print(subspaces_pos(ss, (-0.17, -0.35))[:2], 256//2)
+  print(subspaces_pos(ss, (-0.17, -0.35))[:2], 256//2)
   print(subspace_inverse_pos(256, subspaces_pos(ss, (-0.17, -0.35))[:2]))
+  
+  #for v in subspace_axis(256):
+  #  print(subspaces_pos(ss, (v, 0)))
   
   ss = subspaces_create(7)
   ss[0].itemset((2, 1), 1)
+  print(ss[0])
   display(subspace_peaks(ss[0], 1))
   display(subspaces_item(ss, (-0.666, -0.3333)))
 

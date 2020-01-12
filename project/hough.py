@@ -73,11 +73,11 @@ def _hough_vec_process(input_values):
   
   space = sub.subspaces_create(resolution, dtype = np.uint8)
   for M in [Ma, Mb]:
-    ba_array = np.einsum('ij,...j', M, values)[:, :2]
-    ba_array = ba_array[~np.isnan(ba_array[:, 0])]
-    if ba_array.size > 0:
+    ab_array = np.einsum('ij,...j', M, values)[:, :2]
+    ab_array = ab_array[~np.isnan(ab_array[:, 0])]
+    if ab_array.size > 0:
       # long running
-      np.apply_along_axis(lambda ba: sub.subspaces_itemset(space, ba, 1), 1, ba_array)
+      np.apply_along_axis(lambda ab: sub.subspaces_itemset(space, ab, 1), 1, ab_array)
   
   return space
 
@@ -91,8 +91,8 @@ def _hough_vec_process(input_values):
 # und entsprechende Umwandlung in eine Matrix. Die Umformungen lauten dabei.
 #
 # $$
-#     b = -ax - y \\
-#     a = -b\frac{1}{x} + \frac{-y}{x}
+#     a = -b\frac{1}{x} + \frac{-y}{x} \\
+#     b = -ax - y 
 # $$
 #
 # Für Bildpixel die 0 sind wird eine invalide Matrix ausgegeben, diese wird im späteren Verlauf
@@ -110,8 +110,8 @@ def _value_filter_a_iterate(src_xy):
   if x == 0 or sub.subspaces_item(src, (x, y)) == 0:
     return nan_m
   return np.array([
+    [-1/x, 0, -y/x],
     [1, 0, 0],
-    [0, -1/x, -y/x],
     [0, 0, 1]
   ])
 
@@ -120,8 +120,8 @@ def _value_filter_b_iterate(src_xy):
   if sub.subspaces_item(src, (x, y)) == 0:
     return nan_m
   return np.array([
-    [-x, 0, -y],
-    [0, 1, 0],
+    [1, 0, 0],
+    [0, -x, -y],
     [0, 0, 1]
   ])
 
@@ -163,6 +163,7 @@ def hough_vec(src: sub.subspaces_t, max_memory = os.sysconf('SC_PAGE_SIZE') * os
   ss = sub.subspaces_create(resolution)
   values = sub.subspace_axis(resolution)
   
+  # cartesian product
   prod = np.array(np.meshgrid(values, values)).T.reshape(-1, 2).tolist()
   
   # needs the most amount of time
@@ -172,11 +173,12 @@ def hough_vec(src: sub.subspaces_t, max_memory = os.sysconf('SC_PAGE_SIZE') * os
     Ma_iterate = np.array(p.map(_value_filter_a_iterate, iterate, chunksize = chunksize))
     Mb_iterate = np.array(p.map(_value_filter_b_iterate, iterate, chunksize = chunksize))
 
-  # Ms = np.concatenate((Ma_iterate, Mb_iterate)).reshape(-1, 3, 3)
+  # filter out matrices where both are nan for the same pixel
   M_iterate_filter = ~np.isnan(Ma_iterate[:,0,0]) & ~np.isnan(Mb_iterate[:,0,0])
   
   Ma_iterate = Ma_iterate[M_iterate_filter].reshape(-1, 3, 3)
   Mb_iterate = Mb_iterate[M_iterate_filter].reshape(-1, 3, 3)
+  
   M_iterate = np.column_stack((Ma_iterate, Mb_iterate, np.full((len(Ma_iterate), 3, 3), resolution)))
 
   print("done setup")

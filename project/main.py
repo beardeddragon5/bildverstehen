@@ -36,20 +36,23 @@ from skimage.feature import peak_local_max
 # - Google Maps
 # - https://earth.jsc.nasa.gov/DatabaseImages/ESC/large/ISS013/ISS013-E-18319.JPG
 
-image_path = '../images/figure3.png'
+image_path = '../images/munich_airport.jpg'
 resolution = None
+max_memory = 25 * 1024**3
 
 # Für den Canny Algorithmus zur Reduzierung der verwendeten Daten aus dem Bild werden `canny_min` und 
 # `canny_max` verwendet.
 
-canny_min = 230
+canny_min = 60 # 230
 canny_max = 255
 
-# Für die Filterung der Subspaces zwischen den Hough Transformationen werden die beiden letzten
-# Parameter genutzt.
+# # TODO
 
 non_maximum_suppression_size = 10
-relative_filter_threshold = 0.80
+layer1_threshold = 0.5
+on_line_threshold = 0.5 # None
+lines_intersecting_threshold = None
+layer3_threshold = 1
 
 # ## 2. Laden des Bildes
 # In diesem Abschnitt wird das oben in Abschnitt 1 ausgewählte Bild geladen. Wird dabei ein Fehler gefunden wird
@@ -120,29 +123,22 @@ plt.show()
 
 layer0 = sub.subspaces_from_image(resolution, canny)
 
+
 # Erster Hough durchlauf auf dem in subspaces konvertierten Bild. In Layer 1 werden somit mögliche Geraden
 # gefunden die durch Kanten des Bildes verlaufen.
 
-# %time layer1 = hough.hough_vec(layer0, max_memory = 25 * 1024**3)
+# %time layer1 = hough.hough_vec(layer0, max_memory = max_memory)
 
 # Vor jedem weiteren Hough durchgang werden zunächst die Daten gefiltered. Dazu steht im Artikel:
-# > ... As to the data read out at each layer, local maxima are selected. These discrete points are also the acutal data passed on to the next layer. In order to avoid closely spaced clusters of peaks, a non-maximum suppression is applied. The logarithm of peak height ist used as weightining factor for the votes it has at the next level. ...  
-# (Tuytellars et al., The Cascaded Hough Transform as an Aid in Aerial Image Interpretation, ICCV-1998)
+# > ... As to the data read out at each layer, local maxima are selected. These discrete points are also the acutal data passed on to the next layer. In order to avoid closely spaced clusters of peaks, a non-maximum suppression is applied. The logarithm of peak height ist used as weightining factor for the votes it has at the next level. ... [1]
 #
-# Diese Filterung wird in dieser Implementierung folgendermaßen gelöst:
+# In einem anderem Artikel von Tuytelaars steht dies zur Filterung:
+# > ... Only truly 'non-accidental' structures are read out at the different layers. What that means is layer dependent: for the subsequent layers these are straight lines of a  minimum length, points where at least  three straight lines intersect, and lines that contain at least three line intersections. Note that in the latter case, these can be three intersections of each time two lines. ...  [2]
 #
-# 1. Ermittlung des globalen Maximum Wertes für möglichen Grenzwert
-# 2. Umwandlung jedes Subspaces in einen [0-1] Wertebereich wobei die bisherige Verteilung beibehalten wird
-# 3. Wie im Artikel beschrieben wird hier der $\log_2$ auf alle Elemente angewandt. Dabei werden bisherige
-#    Maximas abgeschwächt
-# 4. Rücktransformierung in den Wertebereich [0-255]
-# 5. Finden von lokalen Maxima mit möglichen Grenzwert
-# 6. Non-Maximum Supression um Punktegruppen zu verkleinern
 
 # +
-import scipy.ndimage as ndimage
-import scipy.ndimage.filters as filters
-
+# import scipy.ndimage as ndimage
+# import scipy.ndimage.filters as filters
 
 def non_maximum_suppression(image, distance):
   out = np.zeros(image.shape, dtype=image.dtype)
@@ -155,59 +151,76 @@ def non_maximum_suppression(image, distance):
         out.itemset((y - distance, x - distance), neighbor_max)
   return out
 
-# def local_maxima(data, min_distance, threshold_abs):
-#   data_max = filters.maximum_filter(data, min_distance, mode='constant')
-#   maxima = (data == data_max)
-#   data_min = filters.minimum_filter(data, min_distance, mode='constant')
-#   diff = ((data_max - data_min) > threshold_abs)
-#   maxima[diff == 0] = 0
-# 
-#   labeled, num_objects = ndimage.label(maxima)
-#   # xy = np.array(ndimage.center_of_mass(data, labeled, range(1, num_objects+1)))
-#   return np.where(labeled != 0, True, False)
-
-def filter_subspace(spaces: sub.subspaces_t, nms: int, threshold: float = 0.0):
+def filter_subspace(spaces: sub.subspaces_t, nms: int, threshold: np.int32 = 3):
     out = []
-    max_value = sub.subspaces_max(spaces)
     for space in spaces:
       local_max_mask = peak_local_max(
         space, 
         min_distance=1,
         indices=False,
         exclude_border=False,
-        threshold_abs=max_value * threshold,
+        threshold_abs=threshold,
       )
       local_max_space = np.where(local_max_mask, space, 0)
       local_max_space = non_maximum_suppression(local_max_space, nms)
       local_max_space = np.log2(1 + local_max_space).astype(np.int32)
       out.append(local_max_space)
     return out
+  
+def filter_intersect(
+  lines: sub.subspaces_t, 
+  intersects: sub.subspaces_t, 
+  on_line_threshold: float = 0.01,
+  lines_intersecting_threshold: int = 3
+):
+  on_line_threshold = 0.01 if on_line_threshold is None else on_line_threshold
+  lines_intersecting_threshold = 3 if lines_intersecting_threshold is None else lines_intersecting_threshold
+  
+  mask = sub.subspaces_create(sub.subspaces_resolution(lines), dtype = np.bool_)
+  linear_equations = [np.array([-a, -1, -b]) for a, b in sub.subspaces_to_line(lines, 1)]
+  homogene_points = [np.array([x, y, 1]) for x, y in sub.subspaces_to_line(intersects, 1)]
 
-
+  for p in homogene_points:
+    count = 0
+    for eq in linear_equations:
+      if abs(eq @ p) < on_line_threshold: 
+        count += 1
+      if count >= lines_intersecting_threshold:
+        sub.subspaces_itemset(mask, p[:2], True)
+        break
+  return [np.where(mask_space, intersects[i], 0) for i, mask_space in enumerate(mask)]
 # -
 
-filtered_layer1 = filter_subspace(layer1, non_maximum_suppression_size)
+max_value = sub.subspaces_max(layer1)
+filtered_layer1 = filter_subspace(layer1, non_maximum_suppression_size, threshold=max_value*layer1_threshold)
+print([space[space > 0].size for space in filtered_layer1])
+print([space.max() for space in filtered_layer1])
 
-# %time layer2 = hough.hough_vec(filtered_layer1, max_memory = 22 * 1024**3)
+# %time layer2 = hough.hough_vec(filtered_layer1, max_memory = max_memory)
 
 filtered_layer2 = filter_subspace(layer2, non_maximum_suppression_size)
+filtered_layer2 = filter_intersect(filtered_layer1, filtered_layer2, 
+                                   on_line_threshold = on_line_threshold, 
+                                   lines_intersecting_threshold = lines_intersecting_threshold)
 
-# %time layer3 = hough.hough_vec(filtered_layer2, max_memory = 25 * 1024**3)
+# %time layer3 = hough.hough_vec(filtered_layer2, max_memory = max_memory)
 
-filtered_layer3 = filter_subspace(layer3, non_maximum_suppression_size)
-
-[cv2.imwrite('/tmp/layer1_{}.png'.format(i), layer1[i]) for i in range(3)]
-[cv2.imwrite('/tmp/layer2_{}.png'.format(i), layer2[i]) for i in range(3)]
-[cv2.imwrite('/tmp/layer3_{}.png'.format(i), layer3[i]) for i in range(3)]
+filtered_layer3 = filter_subspace(layer3, non_maximum_suppression_size, threshold = layer3_threshold)
 
 
-# # Display Results
+# +
+# [cv2.imwrite('/tmp/layer1_{}.png'.format(i), layer1[i]) for i in range(3)]
+# [cv2.imwrite('/tmp/layer2_{}.png'.format(i), layer2[i]) for i in range(3)]
+# [cv2.imwrite('/tmp/layer3_{}.png'.format(i), layer3[i]) for i in range(3)]
+# -
+
+# ## 5. Display Results
 
 # +
 def plot_lines(axis, ss: sub.subspaces_t, style='-'):
   resolution = sub.subspaces_resolution(ss)
   x = np.arange(*axis.get_xlim(), 2.0 / resolution)
-  for b, a in sub.subspaces_to_line(ss, 1):
+  for a, b in sub.subspaces_to_line(ss, 1):
     axis.plot(x, -a * x - b, style)
     
 def plot_intersect(axis, ss: sub.subspaces_t, style: str):
@@ -256,46 +269,39 @@ def full_space(ss: sub.subspaces_t):
   image = np.apply_along_axis(lambda xy: sub.subspaces_item(ss, xy), 1, prod).reshape((values.size, values.size))
   return image.T
 
-def ss_thres(ss: sub.subspaces_t, threshold: float):
+def ss_thres(ss: sub.subspaces_t, threshold: float, threshold_max: float = 1.0):
   ss_max = sub.subspaces_max(ss)
-  return [np.where((s > ss_max * threshold), s, 0) for s in ss]
-
-
-# -
-
-fig, axs = plt.subplots(1, 1, sharey=True)
-fig.suptitle("image", fontsize=32)
-fig.set_size_inches(20, 20)
-axs.set_ylim((5, -5))
-axs.set_xlim((-5, 5))
-_ = axs.imshow(image, 'gray', extent=[-1, 1, 1, -1])
-plot_lines(axs, ss_thres(filtered_layer1, 0.75))
-#plot_lines(axs, ss_thres(filtered_layer2, 0.5), 'b-')
-#plot_intersect(axs, ss_thres(filtered_layer3, 0.9), 'ro')
-
-_ = plot_layer("layer 0", layer0) # , line_ss=ss_thres(filtered_layer1, 0.75)
-
-plot_layer("layer 1", layer1, fss=filtered_layer1) # , line_ss=ss_thres(filtered_layer2, 0.8)
-print([space[space > 0].size for space in filtered_layer1])
-#print(filtered_layer1[0].max())
-#plt.hist(cv2.calcHist(filtered_layer1[0], 0, None, filtered_layer1[0].max(), [0, filtered_layer1[0].max()]))
+  return [np.where((s > ss_max * threshold) & (s <= ss_max * threshold_max), s, 0) for s in ss]
 
 
 # +
-# flayer1 = full_space(filtered_layer1)
+fig, axs = plt.subplots(1, 1, sharey=True)
+fig.suptitle("image", fontsize=32)
+fig.set_size_inches(20, 20)
+limit = 308
+axs.set_ylim((limit, -limit))
+axs.set_xlim((-limit, limit))
+_ = axs.imshow(image, 'gray', extent=[-1, 1, 1, -1])
+plot_lines(axs, filtered_layer1)
+plot_intersect(axs, filtered_layer2, 'bo')
+#plot_lines(axs, filtered_layer3, 'r--')
+
+#lines = [
+# (-0.7850162866449512, 0.2931596091205213),
+# (0.6872964169381108, -0.2671009771986971),
+#]
+#x = np.arange(*axs.get_xlim(), 2.0 / resolution)
+#for b, a in lines:
+#  axs.plot(x, -a * x - b, 'bo')
+
 # -
 
-'''
-values = sub.subspace_axis(resolution)
-fig, axs = plt.subplots(1, 1, sharey=True)
-fig.suptitle("full layer1", fontsize=32)
-fig.set_size_inches(20, 20)
-axs.set_ylim((values.max(), values.min()))
-axs.set_xlim((values.min(), values.max()))
-axs.imshow(flayer1, 'gray', extent = [values.min(), values.max(), values.max(), values.min()])
-plot_lines(axs, ss_thres(filtered_layer2, 0.90))
-'''
-;
+fig, axs = plot_layer("layer 0", layer0, line_ss=filtered_layer1)
+plot_intersect(axs[0], filtered_layer2, style='ro')
+
+fix, axs = plot_layer("layer 1", layer1, fss=filtered_layer1, line_ss=filtered_layer2)
+print([space[space > 0].size for space in filtered_layer1])
+
 
 fig, axs = plot_layer("layer 2", layer2, fss = filtered_layer2)
 print([space[space > 0].size for space in filtered_layer2])
@@ -303,7 +309,10 @@ print([space[space > 0].size for space in filtered_layer2])
 plot_layer("layer 3", layer3, fss = filtered_layer3)
 print([space[space > 0].size for space in filtered_layer3])
 
-
-
-
-
+# ## Quellen
+# **[1]** *Tuytelaars et al., The Cascaded Hough Transform as an Aid in Aerial Image Interpretation, ICCV-1998*
+#
+# **[2]** *Tuytelaars, T., Proesmans, M., & Van Gool, L. (1997). The cascaded Hough transform as support for 
+#      grouping and finding vanishing points and lines. Lecture Notes in Computer Science, 278–289. 
+#      doi:10.1007/bfb0017873*
+#
