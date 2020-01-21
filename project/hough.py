@@ -6,11 +6,8 @@
 import subspace as sub
 import numpy as np
 import cv2
-import sys
-import os
 import multiprocessing as multi
 import draw
-import time
 from matplotlib import pyplot as plt
 
 
@@ -34,9 +31,9 @@ from matplotlib import pyplot as plt
 # \texttt{end}\\
 # $
 #
-# Der Code musste auf die Subspaces angepasst werden. Dabei werden nicht nur die Werte bereich
-# von $ 0 \ldots \pi $ durchlaufen, sondern die Wertebereiche von $ -1 \dots 1 $ für die einzelnen
-# Subspaces.
+# Der Code musste auf die Subspaces angepasst werden. Der größte Unterschied ist das durchlaufen des Raumes.
+# Zunächst wird dafür eine virtuelle Achse gebildet die jede diskrete Zelle in allen 3 Subspaces einmal durchläuft. Außerdem muss im Gegesatz zum normalen hough beide Achsen des Parameterraums durchlaufen werden.
+# Sonst werden duch die Diskretisierung viele Geraden nicht gefunden. 
 #
 # In dem folgenden Codeblock ist ein Durchlauf eines (x, y) paares auf den Subspaces. Dies ist equivalent zu
 # diesem Teil des pseudocodes.
@@ -48,27 +45,14 @@ from matplotlib import pyplot as plt
 # \texttt{end}\\
 # $
 #
-# Die `values` sind dabei die möglichen Werte auf den einzelnen Achsen um alle Pixel des Subspaces einmal
-# zu besuchen. Fehler durch Auslassung der Zwischenwerte werden nicht berücksichtigt.
-#
-# $
-# achse_{[-1, 1]} = \texttt{range(-1, 1, 2 / resolution)} \\
-# achse_{[-\frac 1 x , \frac 1 x]} = \{\frac{resolution}{2i}\,|\, 1 <= i < \lfloor \frac{resolution}{2} \rfloor \} \\
-# $
-#
-# Diese werden als so umgeformt, dass man jeweils Wertepaare `(x, x, 1)` erhält. Im nächsten Schritt werden
-# über entsprechende Matrizen entweder `a` oder `b` für den jeweiligen Wert ausgerechnet und in einem
-# Subspace eingefügt. Der Wert wird dabei auf `1` gesetzt, dadurch wird ein Wert für den selben Wert von `x` 
-# o.`y` nicht doppelt gesetzt.
-#
-# Es muss sowohl `a` als auch `b` ausrechnet werden, da sonst nicht der gesamte Raum ausgefüllt wird.
+# Nachdem die subspace Achse berechnet wurde werden sie umgeformt, dass man jeweils Wertepaare `(x, x, 1)` erhält. Im nächsten Schritt werden über entsprechende Matrizen entweder `a` oder `b` für den jeweiligen Wert ausgerechnet und in einem Subspace eingefügt. Der Wert wird dabei auf `1` gesetzt, dadurch wird ein Wert für den selben Wert von `x` o.`y` nicht doppelt gesetzt.
 
 def _hough_vec_process(input_values):
   resolution = int(input_values[6, 0])
   Ma = input_values[0:3]
   Mb = input_values[3:6]
   
-  values = sub.subspace_axis(resolution)
+  values, _ = sub.subspace_axis(resolution)
   values = np.c_[ values, values, np.ones(len(values)) ]
   
   space = sub.subspaces_create(resolution, dtype = np.uint8)
@@ -145,30 +129,21 @@ def _value_filter_b_iterate(src_xy):
 #
 # Eine weitere Optimierung wäre es die Addition der einzelnen subspaces zum Schluss zu parallelisieren.
 # Über eine Art Map-Reduce Verfahren. Im Augenblick werden diese zum übergeordneten subspace dazugerechnet
-# sobald diese verfügbar sind.
+# sobald diese verfügbar sind. Außerdem lassen sich verschiedene wiederholende Operationen auch vorberechnen.
+# Unter andem die Matrizen verändern sich nicht bei der selben resolution, oder auch die achsen.
 
-# +
-def progress(count, total, status='', bar_len=60):
-    filled_len = int(round(bar_len * count / float(total)))
-
-    percents = round(100.0 * count / float(total), 1)
-    bar = '=' * filled_len + '-' * (bar_len - filled_len)
-
-    sys.stderr.write('[%s] %s%s ...%s\r' % (bar, percents, '%', status))
-    sys.stderr.flush()
-
-def hough_vec(src: sub.subspaces_t, max_memory = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES')) -> sub.subspaces_t:
+def hough_vec(src: sub.subspaces_t, max_memory: int) -> sub.subspaces_t:
   resolution = sub.subspaces_resolution(src)
   cpus = multi.cpu_count() - 2
   ss = sub.subspaces_create(resolution)
-  values = sub.subspace_axis(resolution)
+  values, _ = sub.subspace_axis(resolution)
   
   # cartesian product
-  prod = np.array(np.meshgrid(values, values)).T.reshape(-1, 2).tolist()
+  prod = sub.cartesian_product(values, values)
   
   # needs the most amount of time
   with multi.Pool(multi.cpu_count()) as p:
-    iterate = [[src, xy[0], xy[1]] for xy in prod]
+    iterate = [[src, x, y] for x, y in prod]
     chunksize = max(1, (len(iterate) // multi.cpu_count()))
     Ma_iterate = np.array(p.map(_value_filter_a_iterate, iterate, chunksize = chunksize))
     Mb_iterate = np.array(p.map(_value_filter_b_iterate, iterate, chunksize = chunksize))
@@ -190,12 +165,10 @@ def hough_vec(src: sub.subspaces_t, max_memory = os.sysconf('SC_PAGE_SIZE') * os
     iterator = p.imap_unordered(_hough_vec_process, M_iterate, chunksize = chunksize)
     for i, space in enumerate(iterator):
       sub.subspaces_add_to(ss, space)
-      progress(i, len(M_iterate))
+      draw.progress(i, len(M_iterate))
 
   return ss
 
-
-# -
 
 if __name__ == '__main__':
   image_path = '../images/hough.png'
@@ -212,58 +185,3 @@ if __name__ == '__main__':
   fig, axs = plt.subplots(1, 3, sharey=True)
   for i, space in enumerate(ss):
     axs[i].imshow(space, 'gray', extent=[-1, 1, 1, -1])
-
-'''
-def _hough_process(args):
-  x, y, src = args
-  if sub.subspaces_item(src, (x, y)) == 0:
-    return None
-  
-  resolution = sub.subspaces_resolution(src)
-  values = sub.subspace_axis(resolution)
-  
-  pixel_subspace = sub.subspaces_create(resolution)
-  
-  values = np.c_[ values, values, np.ones(len(values)) ]
-  
-  Ma_iterate = np.array([
-      [-x, 0, -y],
-      [0, 1, 0],
-      [0, 0, 1]
-  ])
-
-  ba_array = np.einsum('ij,...j', Ma_iterate, values)[:, :2]
-  np.apply_along_axis(lambda ba: sub.subspaces_itemset(pixel_subspace, ba, 1), 1, ba_array)
-  
-  if x != 0:
-    Mb_iterate = np.array([
-        [1, 0, 0],
-        [0, -1/x, -y/x],
-        [0, 0, 1]
-    ])
-    
-    ba_array = np.einsum('ij,...j', Mb_iterate, values)[:, :2]
-    np.apply_along_axis(lambda ba: sub.subspaces_itemset(pixel_subspace, ba, 1), 1, ba_array)
-  return pixel_subspace
-
-def hough(src: sub.subspaces_t) -> sub.subspaces_t:
-  resolution = sub.subspaces_resolution(src)
-  ss = sub.subspaces_create(resolution)
-  values = sub.subspace_axis(resolution)
-  
-  # cartesian of x an y
-  prod = np.array(np.meshgrid(values, values)).T.reshape(-1, 2).tolist()
-  for p in prod:
-    p.append(src)
-    
-  print("done with setup")
-
-  with multi.Pool(multi.cpu_count()) as p:
-    chunksize = len(prod) // multi.cpu_count()
-    iterator = p.imap_unordered(_hough_process, prod, chunksize = chunksize)
-    for i, space in enumerate(iterator):
-      if space is not None:
-        sub.subspaces_add_to(ss, space)
-
-  return ss
-'''
